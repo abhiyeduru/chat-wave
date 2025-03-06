@@ -61,6 +61,12 @@ const removeMediaBtn = document.getElementById('removeMediaBtn');
 const emojiPickerBtn = document.getElementById('emojiPickerBtn');
 const emojiPicker = document.getElementById('emojiPicker');
 const spinnerOverlay = document.getElementById('spinnerOverlay');
+const clearChatBtn = document.getElementById('clearChatBtn');
+
+// Add to your DOM Elements section
+const infoModal = document.createElement('div');
+infoModal.className = 'info-modal';
+document.body.appendChild(infoModal);
 
 // Global Variables
 let currentUser = null;
@@ -322,6 +328,58 @@ mobileBackBtn.addEventListener('click', () => {
     chatContainer.classList.remove('show-chat');
 });
 
+// Add after existing event listeners
+let touchStartX = 0;
+let touchEndX = 0;
+
+// Handle touch events for mobile swipe
+document.addEventListener('touchstart', e => {
+    touchStartX = e.changedTouches[0].screenX;
+}, false);
+
+document.addEventListener('touchend', e => {
+    touchEndX = e.changedTouches[0].screenX;
+    handleSwipe();
+}, false);
+
+function handleSwipe() {
+    const swipeThreshold = 50;
+    const diff = touchEndX - touchStartX;
+    
+    if (Math.abs(diff) < swipeThreshold) return;
+
+    if (diff > 0) {
+        // Swipe right - show login
+        cube.classList.remove('show-signup');
+    } else {
+        // Swipe left - show signup
+        cube.classList.add('show-signup');
+    }
+}
+
+// Update form submission for better mobile handling
+function updateFormSubmission() {
+    const forms = document.querySelectorAll('form');
+    forms.forEach(form => {
+        form.addEventListener('submit', () => {
+            // Blur any focused input to hide mobile keyboard
+            document.activeElement.blur();
+        });
+    });
+}
+
+// Call on page load
+updateFormSubmission();
+
+// Handle viewport height for mobile browsers
+function setMobileHeight() {
+    const vh = window.innerHeight * 0.01;
+    document.documentElement.style.setProperty('--vh', `${vh}px`);
+}
+
+window.addEventListener('resize', setMobileHeight);
+setMobileHeight();
+
 // Update auth state observer
 auth.onAuthStateChanged(async (user) => {
     try {
@@ -516,44 +574,46 @@ function filterUsers(searchTerm) {
     });
 }
 
-async function loadMessages(userId) {
-    // Clear messages container
+function loadMessages(userId) {
     messagesContainer.innerHTML = '';
-    
-    // Create a unique chat room ID (sort user IDs to ensure consistency)
     const chatRoomId = [currentUserId, userId].sort().join('_');
-    
-    // Listen for messages in real-time
+    isFirstLoad = true;
+
     return db.collection('messages')
         .where('chatRoomId', '==', chatRoomId)
         .orderBy('timestamp', 'asc')
-        .onSnapshot(snapshot => {
-            // Handle only new messages if not first load
-            if (!isFirstLoad) {
+        .limit(50) // Limit for performance
+        .onSnapshot({
+            next: (snapshot) => {
                 snapshot.docChanges().forEach(change => {
                     if (change.type === 'added') {
-                        const message = change.doc.data();
-                        appendMessage(message);
+                        appendMessage(change.doc.data());
+                    } else if (change.type === 'modified') {
+                        updateMessage(change.doc.id, change.doc.data());
+                    } else if (change.type === 'removed') {
+                        removeMessage(change.doc.id);
                     }
                 });
-            } else {
-                // Load all messages on first load
-                snapshot.forEach(doc => {
-                    const message = doc.data();
-                    appendMessage(message);
-                });
-                isFirstLoad = false;
-                
-                // Scroll to bottom
                 messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            },
+            error: (error) => {
+                console.error('Messages listener error:', error);
+                messagesContainer.innerHTML = `
+                    <div class="error-message">
+                        Failed to load messages. Please refresh.
+                    </div>
+                `;
             }
         });
 }
 
+// Update appendMessage function to handle timestamps better
 function appendMessage(message) {
     const messageElement = document.createElement('div');
     const isCurrentUser = message.senderId === currentUserId;
     messageElement.className = `message ${isCurrentUser ? 'sent' : 'received'}`;
+    const messageId = message.id || Date.now().toString();
+    messageElement.id = `message-${messageId}`;
     
     let mediaHtml = '';
     if (message.mediaUrl) {
@@ -564,106 +624,290 @@ function appendMessage(message) {
         }
     }
     
+    // Initial timestamp display
+    const timestamp = message.timestamp ? formatTime(message.timestamp.toDate()) : 'Sending...';
+    
     messageElement.innerHTML = `
         <div class="message-content">
             ${mediaHtml}
-            ${message.text}
-            <div class="message-time">${formatTime(message.timestamp.toDate())}</div>
+            ${message.text || ''}
+            <div class="message-time" id="time-${messageId}">${timestamp}</div>
+            <div class="message-options">
+                <button class="message-option-btn" onclick="showMessageMenu(event, '${messageId}')">
+                    <i class="fas fa-ellipsis-v"></i>
+                </button>
+            </div>
         </div>
     `;
     
     messagesContainer.appendChild(messageElement);
-    
-    // Scroll to bottom
     messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+    // Update timestamp when it becomes available
+    if (!message.timestamp) {
+        const timeElement = messageElement.querySelector(`#time-${messageId}`);
+        const checkTimestamp = setInterval(async () => {
+            try {
+                const messageRef = await db.collection('messages')
+                    .where('chatRoomId', '==', message.chatRoomId)
+                    .where('senderId', '==', message.senderId)
+                    .where('text', '==', message.text)
+                    .limit(1)
+                    .get();
+
+                if (!messageRef.empty) {
+                    const updatedMessage = messageRef.docs[0].data();
+                    if (updatedMessage.timestamp) {
+                        timeElement.textContent = formatTime(updatedMessage.timestamp.toDate());
+                        clearInterval(checkTimestamp);
+                    }
+                }
+            } catch (error) {
+                console.error('Error updating timestamp:', error);
+            }
+        }, 1000);
+
+        // Clear interval after 10 seconds to prevent infinite checking
+        setTimeout(() => clearInterval(checkTimestamp), 10000);
+    }
 }
 
-// Update sendMessage function
+// Add these new functions
+function showMessageMenu(event, messageId) {
+    event.stopPropagation();
+    
+    // Remove any existing menu
+    const existingMenu = document.querySelector('.message-menu');
+    if (existingMenu) {
+        existingMenu.remove();
+    }
+
+    const menu = document.createElement('div');
+    menu.className = 'message-menu';
+    menu.innerHTML = `
+        <div class="message-menu-item" onclick="editMessage('${messageId}')">
+            <i class="fas fa-edit"></i> Edit
+        </div>
+        <div class="message-menu-item" onclick="deleteMessage('${messageId}')">
+            <i class="fas fa-trash"></i> Delete
+        </div>
+        <div class="message-menu-item" onclick="showMessageInfo('${messageId}')">
+            <i class="fas fa-info-circle"></i> Info
+        </div>
+    `;
+
+    // Position menu
+    const button = event.currentTarget;
+    const rect = button.getBoundingClientRect();
+    menu.style.top = `${rect.top}px`;
+    menu.style.left = `${rect.left + 30}px`;
+
+    document.body.appendChild(menu);
+
+    // Close menu when clicking outside
+    setTimeout(() => {
+        document.addEventListener('click', function closeMenu(e) {
+            if (!menu.contains(e.target) && !button.contains(e.target)) {
+                menu.remove();
+                document.removeEventListener('click', closeMenu);
+            }
+        });
+    }, 0);
+}
+
+async function editMessage(messageId) {
+    const messageDoc = await db.collection('messages').doc(messageId).get();
+    if (!messageDoc.exists) return;
+
+    const message = messageDoc.data();
+    if (message.senderId !== currentUserId) {
+        alert("You can only edit your own messages");
+        return;
+    }
+
+    const newText = prompt('Edit message:', message.text);
+    if (newText && newText !== message.text) {
+        await db.collection('messages').doc(messageId).update({
+            text: newText,
+            edited: true,
+            editedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+    }
+}
+
+async function deleteMessage(messageId) {
+    if (!confirm('Are you sure you want to delete this message?')) return;
+
+    try {
+        const messageDoc = await db.collection('messages').doc(messageId).get();
+        if (!messageDoc.exists) return;
+
+        const message = messageDoc.data();
+        if (message.senderId !== currentUserId) {
+            alert("You can only delete your own messages");
+            return;
+        }
+
+        await db.collection('messages').doc(messageId).delete();
+        
+        // Remove message from UI
+        const messageElement = document.getElementById(`message-${messageId}`);
+        if (messageElement) {
+            messageElement.remove();
+        }
+    } catch (error) {
+        console.error('Error deleting message:', error);
+        alert('Failed to delete message');
+    }
+}
+
+async function showMessageInfo(messageId) {
+    try {
+        const messageDoc = await db.collection('messages').doc(messageId).get();
+        if (!messageDoc.exists) return;
+
+        const message = messageDoc.data();
+        const sender = await db.collection('users').doc(message.senderId).get();
+        const senderData = sender.exists ? sender.data() : { name: 'Unknown' };
+
+        infoModal.innerHTML = `
+            <div class="info-modal-header">
+                <h3>Message Info</h3>
+                <button class="info-modal-close" onclick="infoModal.style.display='none'">×</button>
+            </div>
+            <div class="info-modal-content">
+                <div class="info-item">
+                    <span class="info-label">From:</span>
+                    <span>${senderData.name}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Sent:</span>
+                    <span>${message.timestamp ? formatTime(message.timestamp.toDate()) : 'Sending...'}</span>
+                </div>
+                ${message.edited ? `
+                    <div class="info-item">
+                        <span class="info-label">Edited:</span>
+                        <span>${formatTime(message.editedAt.toDate())}</span>
+                    </div>
+                ` : ''}
+                <div class="info-item">
+                    <span class="info-label">Status:</span>
+                    <span>${message.read ? 'Read' : 'Delivered'}</span>
+                </div>
+            </div>
+        `;
+
+        infoModal.style.display = 'block';
+
+        // Close modal when clicking outside
+        window.addEventListener('click', function closeModal(e) {
+            if (e.target === infoModal) {
+                infoModal.style.display = 'none';
+                window.removeEventListener('click', closeModal);
+            }
+        });
+    } catch (error) {
+        console.error('Error showing message info:', error);
+        alert('Failed to load message info');
+    }
+}
+
+// Add this event listener for Enter key
+messageText.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+    }
+});
+
+// Update sendMessage function to include message ID
 async function sendMessage() {
     const text = messageText.value.trim();
     
     if ((!text && !mediaFile) || !selectedUserId) {
         return;
     }
-    
+
+    // Reset form immediately for better UX
+    messageText.value = '';
+    const textToSend = text;
+    const messageId = Date.now().toString();
+
     try {
-        showSpinner();
-        
+        const chatRoomId = [currentUserId, selectedUserId].sort().join('_');
         let mediaUrl = '';
         let mediaType = '';
-        
+
         if (mediaFile) {
-            const formData = new FormData();
-            formData.append('file', mediaFile);
-            formData.append('upload_preset', cloudinaryConfig.uploadPreset);
-            
-            const response = await fetch(
-                `https://api.cloudinary.com/v1_1/${cloudinaryConfig.cloudName}/upload`,
-                {
-                    method: 'POST',
-                    body: formData
-                }
-            );
-            
-            const data = await response.json();
-            if (data.error) {
-                throw new Error(data.error.message);
+            try {
+                const formData = new FormData();
+                formData.append('file', mediaFile);
+                formData.append('upload_preset', cloudinaryConfig.uploadPreset);
+                
+                const response = await fetch(
+                    `https://api.cloudinary.com/v1_1/${cloudinaryConfig.cloudName}/upload`,
+                    { method: 'POST', body: formData }
+                );
+                
+                const data = await response.json();
+                if (data.error) throw new Error(data.error.message);
+                
+                mediaUrl = data.secure_url;
+                mediaType = mediaFile.type.split('/')[0];
+
+                // Reset media preview
+                mediaFile = null;
+                mediaPreview.style.display = 'none';
+                mediaPreviewImg.src = '';
+                mediaPreviewVideo.src = '';
+                mediaUpload.value = '';
+            } catch (error) {
+                console.error('Media upload failed:', error);
+                // Continue without media if upload fails
             }
-            
-            mediaUrl = data.secure_url;
-            mediaType = mediaFile.type.split('/')[0];
         }
-        
-        const chatRoomId = [currentUserId, selectedUserId].sort().join('_');
-        
-        // Create message document
-        const messageDoc = {
-            chatRoomId: chatRoomId,
+
+        // Create message document with ID
+        const messageData = {
+            id: messageId,
+            chatRoomId,
             senderId: currentUserId,
             receiverId: selectedUserId,
-            text: text,
-            mediaUrl: mediaUrl,
-            mediaType: mediaType,
+            text: textToSend,
+            mediaUrl,
+            mediaType,
             timestamp: firebase.firestore.FieldValue.serverTimestamp(),
             read: false
         };
-        
-        // Add message to Firestore
-        await db.collection('messages').add(messageDoc);
-        
-        // Update last message preview
-        const messagePreview = text || `[${mediaType}]`;
+
+        // Add message with specific ID
+        await db.collection('messages').doc(messageId).set(messageData);
+
+        // Update last messages for both users
         const batch = db.batch();
-        
-        // Update both users' last messages
-        const updates = {
-            message: messagePreview,
+        const lastMessageData = {
+            message: textToSend || `[${mediaType}]`,
             timestamp: firebase.firestore.FieldValue.serverTimestamp()
         };
-        
+
         batch.update(db.collection('users').doc(currentUserId), {
-            [`lastMessages.${selectedUserId}`]: updates
+            [`lastMessages.${selectedUserId}`]: lastMessageData
         });
-        
+
         batch.update(db.collection('users').doc(selectedUserId), {
-            [`lastMessages.${currentUserId}`]: updates
+            [`lastMessages.${currentUserId}`]: lastMessageData
         });
-        
+
         await batch.commit();
-        
-        // Reset form
-        messageText.value = '';
-        mediaFile = null;
-        mediaPreview.style.display = 'none';
-        mediaPreviewImg.src = '';
-        mediaPreviewVideo.src = '';
-        mediaUpload.value = '';
-        
-        hideSpinner();
+
     } catch (error) {
-        hideSpinner();
         console.error('Error sending message:', error);
-        alert('Error sending message: ' + error.message);
+        // Show error in UI instead of alert
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'message-error';
+        errorDiv.textContent = 'Failed to send message. Please try again.';
+        messagesContainer.appendChild(errorDiv);
+        setTimeout(() => errorDiv.remove(), 3000);
     }
 }
 
@@ -783,3 +1027,126 @@ window.addEventListener('resize', () => {
         chatContainer.classList.remove('show-chat');
     }
 });
+
+// Add CSS for error message
+const style = document.createElement('style');
+style.textContent = `
+    .message-error {
+        color: #721c24;
+        background-color: #f8d7da;
+        border: 1px solid #f5c6cb;
+        padding: 10px;
+        margin: 10px;
+        border-radius: 5px;
+        text-align: center;
+    }
+    
+    .error-message {
+        text-align: center;
+        color: #721c24;
+        padding: 20px;
+        margin: 20px;
+        background: #f8d7da;
+        border-radius: 5px;
+    }
+    .system-message {
+        text-align: center;
+        color: #0084ff;
+        background-color: rgba(0, 132, 255, 0.1);
+        padding: 10px;
+        margin: 10px auto;
+        border-radius: 5px;
+        max-width: 200px;
+    }
+`;
+document.head.appendChild(style);
+
+clearChatBtn.addEventListener('click', async () => {
+    if (!selectedUserId) return;
+    
+    if (confirm('Are you sure you want to clear all messages? This cannot be undone.')) {
+        try {
+            showSpinner();
+            const chatRoomId = [currentUserId, selectedUserId].sort().join('_');
+            
+            // Get all messages from this chat room
+            const messagesSnapshot = await db.collection('messages')
+                .where('chatRoomId', '==', chatRoomId)
+                .get();
+            
+            // Delete all messages in a batch
+            const batch = db.batch();
+            messagesSnapshot.docs.forEach(doc => {
+                batch.delete(doc.ref);
+            });
+            
+            // Clear last messages from both users
+            batch.update(db.collection('users').doc(currentUserId), {
+                [`lastMessages.${selectedUserId}`]: firebase.firestore.FieldValue.delete()
+            });
+            
+            batch.update(db.collection('users').doc(selectedUserId), {
+                [`lastMessages.${currentUserId}`]: firebase.firestore.FieldValue.delete()
+            });
+            
+            await batch.commit();
+            
+            // Clear messages container
+            messagesContainer.innerHTML = '';
+            
+            // Show success message
+            const successDiv = document.createElement('div');
+            successDiv.className = 'system-message';
+            successDiv.textContent = 'Chat cleared successfully';
+            messagesContainer.appendChild(successDiv);
+            setTimeout(() => successDiv.remove(), 3000);
+            
+            hideSpinner();
+        } catch (error) {
+            hideSpinner();
+            console.error('Error clearing chat:', error);
+            alert('Failed to clear chat. Please try again.');
+        }
+    }
+});
+
+// Add this CSS to your existing styles
+const additionalStyles = `
+    .system-message {
+        text-align: center;
+        color: #0084ff;
+        background-color: rgba(0, 132, 255, 0.1);
+        padding: 10px;
+        margin: 10px auto;
+        border-radius: 5px;
+        max-width: 200px;
+        animation: fadeIn 0.3s ease;
+    }
+`;
+style.textContent += additionalStyles;
+
+// Add this function at the end of your existing code
+function fixMobileHeight() {
+    // Fix for mobile browsers' viewport height
+    function setVH() {
+        let vh = window.innerHeight * 0.01;
+        document.documentElement.style.setProperty('--vh', `${vh}px`);
+    }
+
+    setVH();
+    window.addEventListener('resize', setVH);
+    window.addEventListener('orientationchange', setVH);
+}
+
+// Call the function
+fixMobileHeight();
+
+// Add this style to your existing styles
+const mobileStyles = `
+    @media (max-width: 480px) {
+        .auth-container {
+            min-height: calc(var(--vh, 1vh) * 100);
+        }
+    }
+`;
+style.textContent += mobileStyles;
