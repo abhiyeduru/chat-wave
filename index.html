@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ChatWave - Real-time Chat Application</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        .auth-container {
+            display: flex;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: #f0f2f5;
+            z-index: 1000;
+        }
+
+        .chat-container {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: #fff;
+        }
+
+        .scene {
+            perspective: 1000px;
+            width: 100%;
+            max-width: 400px;
+            margin: auto;
+        }
+
+        .cube {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            transform-style: preserve-3d;
+            transition: transform 0.6s;
+        }
+
+        .cube.show-signup {
+            transform: rotateY(-180deg);
+        }
+
+        .cube-face {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            padding: 20px;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            backface-visibility: hidden;
+        }
+
+        .cube-face-back {
+            transform: rotateY(180deg);
+        }
+    </style>
+</head>
+<body>
+    <!-- Auth Container (Login/Signup) -->
+    <div class="auth-container" id="authContainer">
+        <div class="auth-card">
+            <div class="scene">
+                <div class="cube" id="cube">
+                    <!-- Login Side -->
+                    <div class="cube-face cube-face-front">
+                        <h2>Login</h2>
+                        <form id="loginForm">
+                            <div class="input-group">
+                                <i class="fas fa-envelope"></i>
+                                <input type="email" id="loginEmail" placeholder="Email" required>
+                            </div>
+                            <div class="input-group">
+                                <i class="fas fa-lock"></i>
+                                <input type="password" id="loginPassword" placeholder="Password" required>
+                            </div>
+                            <button type="submit" class="btn-primary">Login</button>
+                        </form>
+                        <p class="switch-text">Don't have an account? <a href="#" id="showSignup">Sign Up</a></p>
+                    </div>
+                    
+                    <!-- Signup Side -->
+                    <div class="cube-face cube-face-back">
+                        <h2>Sign Up</h2>
+                        <form id="signupForm">
+                            <div class="input-group">
+                                <i class="fas fa-user"></i>
+                                <input type="text" id="signupName" placeholder="Full Name" required>
+                            </div>
+                            <div class="input-group">
+                                <i class="fas fa-envelope"></i>
+                                <input type="email" id="signupEmail" placeholder="Email" required>
+                            </div>
+                            <div class="input-group">
+                                <i class="fas fa-lock"></i>
+                                <input type="password" id="signupPassword" placeholder="Password" required>
+                            </div>
+                            <div class="profile-upload">
+                                <label for="profileImage">
+                                    <div class="profile-placeholder">
+                                        <i class="fas fa-camera"></i>
+                                        <span>Upload Profile Picture</span>
+                                    </div>
+                                    <img id="profilePreview" src="" alt="">
+                                </label>
+                                <input type="file" id="profileImage" accept="image/*" hidden>
+                            </div>
+                            <button type="submit" class="btn-primary">Sign Up</button>
+                        </form>
+                        <p class="switch-text">Already have an account? <a href="#" id="showLogin">Login</a></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Chat Interface -->
+    <div class="chat-container" id="chatContainer" style="display: none;">
+        <!-- Sidebar with Users -->
+        <div class="sidebar">
+            <div class="user-profile">
+                <div class="user-avatar">
+                    <img id="currentUserAvatar" src="" alt="Profile">
+                </div>
+                <div class="user-info">
+                    <h3 id="currentUserName">Loading...</h3>
+                    <p class="status online">Online</p>
+                </div>
+                <button id="logoutBtn" class="btn-icon">
+                    <i class="fas fa-sign-out-alt"></i>
+                </button>
+            </div>
+            <div class="search-container">
+                <i class="fas fa-search"></i>
+                <input type="text" id="userSearch" placeholder="Search users...">
+            </div>
+            <div class="users-list" id="usersList">
+                <!-- User list will be populated here dynamically -->
+            </div>
+        </div>
+
+        <!-- Chat Area -->
+        <div class="chat-area">
+            <div class="chat-header">
+                <button class="mobile-back-btn" id="mobileBackBtn">
+                    <i class="fas fa-arrow-left"></i>
+                    <span>Back</span>
+                </button>
+                <div class="chat-user-info">
+                    <div class="user-avatar">
+                        <img id="selectedUserAvatar" src="" alt="">
+                        <span class="status-dot" id="selectedUserStatus"></span>
+                    </div>
+                    <div class="user-details">
+                        <h3 id="selectedUserName">Select a user to start chatting</h3>
+                        <p class="status" id="selectedUserLastSeen">Last seen: N/A</p>
+                        <p class="typing-indicator" id="typingIndicator">typing...</p>
+                    </div>
+                </div>
+            </div>
+            <div class="messages-container" id="messagesContainer">
+                <div class="welcome-message" id="welcomeMessage">
+                    <div class="welcome-icon">
+                        <i class="fas fa-comments"></i>
+                    </div>
+                    <h2>Welcome to ChatWave</h2>
+                    <p>Select a user from the sidebar to start chatting</p>
+                </div>
+                <!-- Messages will be displayed here dynamically -->
+            </div>
+            <div class="message-input-container" id="messageInputContainer" style="display: none;">
+                <div class="media-actions">
+                    <label for="mediaUpload" class="media-upload-btn">
+                        <i class="fas fa-paperclip"></i>
+                    </label>
+                    <input type="file" id="mediaUpload" accept="image/*,video/*" hidden>
+                    <div class="emoji-picker-btn" id="emojiPickerBtn">
+                        <i class="fas fa-smile"></i>
+                    </div>
+                </div>
+                <div class="emoji-picker" id="emojiPicker">
+                    <!-- Emojis will be dynamically inserted here -->
+                </div>
+                <div class="message-input">
+                    <textarea id="messageText" placeholder="Type a message..." rows="1"></textarea>
+                </div>
+                <button class="send-btn" id="sendMessageBtn">
+                    <i class="fas fa-paper-plane"></i>
+                </button>
+            </div>
+            <div class="media-preview" id="mediaPreview">
+                <div class="media-preview-content">
+                    <img id="mediaPreviewImg" src="" alt="">
+                    <video id="mediaPreviewVideo" controls></video>
+                </div>
+                <button class="remove-media-btn" id="removeMediaBtn">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Spinner -->
+    <div class="spinner-overlay" id="spinnerOverlay">
+        <div class="spinner"></div>
+    </div>
+
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-database-compat.js"></script>
+    
+    <!-- Cloudinary SDK -->
+    <script src="https://upload-widget.cloudinary.com/global/all.js"></script>
+    
+    <!-- App JavaScript -->
+    <script src="app.js"></script>
+</body>
+</html>
